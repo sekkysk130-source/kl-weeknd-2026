@@ -1,4 +1,4 @@
-const V='klwk-2026-10-31a';
+const V='klwk-2026-10-31b';
 const FONT='klwk-font';
 const SHELL=['./','index.html','data.js','logic.js','firebase-config.js','sync.js','app.js','manifest.webmanifest','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});

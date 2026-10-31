@@ -34,13 +34,14 @@ function refreshRemote() {
   scrollTo(0, y);
 }
 setInterval(refreshRemote, 2000);
-const inviteUrl = () => `${location.origin}${location.pathname}?t=${Sync.code()}`;
+// openExternalBrowser: ให้ LINE เปิดใน Safari/Chrome ไม่งั้นรหัสทริปจะไปอยู่ในเบราว์เซอร์ของ LINE
+const inviteUrl = () => `${location.origin}${location.pathname}?t=${Sync.code()}&openExternalBrowser=1`;
 function joinTrip(code) { Sync.setCode(code); location.reload(); }
 { // เปิดจากลิงก์ชวน: เก็บรหัสแล้วลบออกจาก URL
   const q = new URLSearchParams(location.search), t = q.get('t');
   if (t) {
     if (validTripCode(t) && t !== Sync.code()) Sync.setCode(t);
-    q.delete('t'); const rest = q.toString();
+    q.delete('t'); q.delete('openExternalBrowser'); const rest = q.toString();
     try { history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash); } catch (e) { }
   }
 }
