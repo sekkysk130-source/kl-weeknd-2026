@@ -1,4 +1,4 @@
-/* ---------- state (เก็บในเครื่องเท่านั้น) ---------- */
+/* ---------- state (เก็บในเครื่อง + sync ข้อมูลกลางเมื่อเข้าทริปแล้ว) ---------- */
 const KEY = 'klwk.v1';
 const N = TRIP.travelers;
 const DEF = {
@@ -9,7 +9,41 @@ const DEF = {
 };
 let S = (() => { try { const j = JSON.parse(localStorage.getItem(KEY) || '{}'); return { ...DEF, ...j, out: { ...DEF.out, ...(j.out || {}) }, ret: { ...DEF.ret, ...(j.ret || {}) } }; } catch (e) { return JSON.parse(JSON.stringify(DEF)); } })();
 let storeOk = true;
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); storeOk = true; } catch (e) { storeOk = false; } };
+const saveLocal = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); storeOk = true; } catch (e) { storeOk = false; } };
+const save = () => { saveLocal(); Sync.push(); };
+
+/* ---------- sync ---------- */
+const SYNC_ON = typeof FIREBASE_CONFIG !== 'undefined' && !!FIREBASE_CONFIG;
+const Sync = makeSync({
+  L, DEF, store: localStorage, getState: () => S,
+  applyShared: shared => { Object.assign(S, shared); saveLocal(); rebuild(); remoteDirty = true; refreshRemote(); },
+  onStatus: () => { const e = document.querySelector('#sync-st'); if (e) e.textContent = syncLabel(); },
+  connect: (code, onSnap, onErr) => connectFirebase(FIREBASE_CONFIG, code, onSnap, onErr),
+});
+const syncLabel = () => ({ off: 'ยังไม่ได้เข้าทริป', connecting: 'กำลังเชื่อม…', on: Sync.pending() ? 'กำลังส่ง…' : 'ข้อมูลตรงกับทุกคนแล้ว ✓', offline: 'ออฟไลน์ · ที่แก้จะส่งเองเมื่อมีเน็ต', wait: 'ยังเชื่อมไม่ได้ · จะลองใหม่เมื่อมีเน็ต', error: 'เชื่อมไม่ได้ · เช็กรหัสทริป' }[Sync.state()]);
+// ข้อมูลจากเพื่อนเข้าตอนกำลังพิมพ์หรือเปิดฟอร์มอยู่ ให้รอก่อน ไม่งั้นช่องที่กรอกหาย
+let remoteDirty = false;
+function refreshRemote() {
+  if (!remoteDirty) return;
+  const f = document.activeElement;
+  if ((f && /INPUT|TEXTAREA|SELECT/.test(f.tagName)) || $('#sheet').classList.contains('on')) return;
+  remoteDirty = false;
+  const pg = $(`#p-${page}`), open = [...pg.querySelectorAll('details')].map(d => d.open), y = scrollY;
+  R[page]();
+  pg.querySelectorAll('details').forEach((d, i) => { if (open[i] !== undefined) d.open = open[i]; });
+  scrollTo(0, y);
+}
+setInterval(refreshRemote, 2000);
+const inviteUrl = () => `${location.origin}${location.pathname}?t=${Sync.code()}`;
+function joinTrip(code) { Sync.setCode(code); location.reload(); }
+{ // เปิดจากลิงก์ชวน: เก็บรหัสแล้วลบออกจาก URL
+  const q = new URLSearchParams(location.search), t = q.get('t');
+  if (t) {
+    if (validTripCode(t) && t !== Sync.code()) Sync.setCode(t);
+    q.delete('t'); const rest = q.toString();
+    try { history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash); } catch (e) { }
+  }
+}
 
 const $ = (q, el) => (el || document).querySelector(q);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -259,6 +293,7 @@ function saveItem(v) {
   if (!id) S.custom.push({ id: uid(), day, title: t, s, e, place: p, note: n, cost, cat: 'see', icon: '📍' });
   else {
     const it = findItem(id);
+    if (!it) { closeSheet(); return alert('รายการนี้ถูกลบจากเครื่องอื่นไปแล้ว'); }
     if (it._custom) Object.assign(S.custom.find(x => x.id === id), { title: t, s, e, place: p, note: n, cost });
     else {
       const base = DAYS.flatMap(d => d.items).find(x => x.id === id), o = {};
@@ -420,8 +455,15 @@ function renderSet() {
       <label>ชื่อ 3 คน</label>${S.names.map((n, i) => `<input id="nm-${i}" value="${esc(n)}" maxlength="20" class="mb">`).join('')}<button class="cta" data-act="savemoney">บันทึก</button>`)}
     ${fold('pink', 'แอปแผนที่และธีม', `<label>เปิดเส้นทางด้วย</label><div class="seg3 in">${Object.entries(MAPNAME).map(([k, l]) => `<button class="${S.mapApp === k ? 'on' : ''}" data-act="mapapp" data-v="${k}">${l.replace(' Maps', '')}</button>`).join('')}</div>
       <label>ธีม</label><div class="seg3 in">${[['auto', 'ตามเครื่อง'], ['light', 'สว่าง'], ['dark', 'มืด']].map(([k, l]) => `<button class="${S.theme === k ? 'on' : ''}" data-act="theme" data-v="${k}">${l}</button>`).join('')}</div>`)}
-    ${fold('lilac', 'ย้ายข้อมูลไปเครื่องเพื่อน', `<p class="mut">ข้อมูลที่แก้เก็บในเครื่องนี้เท่านั้น คัดลอกแล้วส่งให้เพื่อนวางที่ช่องนี้</p>
-      <div class="acts">${act('export', '', 'คัดลอกข้อมูล')}${act('import', '', 'นำเข้า')}${act('reset', '', 'ล้างทั้งหมด')}</div><textarea id="io" placeholder="วางข้อมูลที่นี่"></textarea><p id="io-msg" class="mut"></p>`)}
+    ${SYNC_ON ? fold('cream', 'แชร์แพลนกับเพื่อน', `<p><b id="sync-st">${esc(syncLabel())}</b></p>
+      ${Sync.joined() ? `<p>ส่งลิงก์นี้ให้เพื่อน ถ้าใช้แอปจากหน้าจอโฮม ให้กรอกรหัสแทน อย่าโพสต์ลิงก์ในที่สาธารณะ ใครมีรหัสก็แก้ได้</p>
+        <label>รหัสทริป</label><input id="sy-code" value="${esc(Sync.code())}" readonly>
+        <div class="acts">${act('synccopy', '', 'คัดลอกลิงก์ชวน', 'dark')}${act('syncleave', '', 'ออกจากทริป', 'lnk')}</div><p id="sy-msg"></p>`
+    : `<p>คนแรกกด "เริ่มแชร์" ในเครื่องที่แก้แพลนไว้ล่าสุด เพื่อนกรอกรหัสหรือเปิดลิงก์ชวน ที่เคยแก้ในเครื่องเพื่อนจะไม่ถูกรวมเข้ามา</p>
+        <button class="cta" data-act="syncnew">เริ่มแชร์</button>
+        <label>มีรหัสแล้ว</label><div class="inrow"><input id="sy-code" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="วางรหัสทริป"><button data-act="syncjoin">เข้าร่วม</button></div><p id="sy-msg" class="warn" hidden></p>`}`) : ''}
+    ${fold('lilac', 'สำรองข้อมูล', `<p class="mut">คัดลอกเก็บไว้ หรือวางที่ช่องนี้แล้วกดนำเข้า${Sync.joined() ? ' · นำเข้าจะทับแพลนของทุกคน ส่วนล้างค่าในเครื่องไม่กระทบข้อมูลกลาง' : ''}</p>
+      <div class="acts">${act('export', '', 'คัดลอกข้อมูล')}${act('import', '', 'นำเข้า')}${act('reset', '', Sync.joined() ? 'ล้างค่าในเครื่อง' : 'ล้างทั้งหมด')}</div><textarea id="io" placeholder="วางข้อมูลที่นี่"></textarea><p id="io-msg" class="mut"></p>`)}
     ${foot()}${storeOk ? '' : '<p class="warn">บันทึกในเครื่องไม่ได้ (โหมดส่วนตัว?)</p>'}</div>`;
 }
 
@@ -471,7 +513,7 @@ document.addEventListener('click', e => {
     delexp: () => { if (!confirm('ลบรายการนี้?')) return; S.exp = S.exp.filter(y => y.id !== v); save(); renderMoney(); },
     inclauto: () => { S.inclAuto = b.checked; save(); const y = scrollY; renderMoney(); scrollTo(0, y); },
     paidfrom: () => paidFrom(v),
-    savepaid: () => { const x = budgetSum().auto.out.find(a => a.it.id === v); const ex = { id: uid(), desc: x.it.title + (x.o ? ' · ' + x.o.label : ''), amount: num($('#y-a').value), cur: 'MYR', cat: x.cat, paid: true, payer: Number($('#y-w').value), split: 'all', link: v }; const err = L.validExpense(ex); if (err.length) return showErr('#x-err', err.join(' · ')); S.exp.push(ex); save(); closeSheet(); renderMoney(); },
+    savepaid: () => { const x = budgetSum().auto.out.find(a => a.it.id === v); if (!x) return closeSheet(); const ex = { id: uid(), desc: x.it.title + (x.o ? ' · ' + x.o.label : ''), amount: num($('#y-a').value), cur: 'MYR', cat: x.cat, paid: true, payer: Number($('#y-w').value), split: 'all', link: v }; const err = L.validExpense(ex); if (err.length) return showErr('#x-err', err.join(' · ')); S.exp.push(ex); save(); closeSheet(); renderMoney(); },
     early: () => { S.early = Number(v); save(); rebuild(); renderConcert(); },
     savemeet: () => { S.meet = $('#meet').value.trim(); save(); b.textContent = '✓'; },
     verify: () => { S.verify[v] = !S.verify[v]; save(); const y = scrollY; renderSet(); scrollTo(0, y); },
@@ -487,8 +529,12 @@ document.addEventListener('click', e => {
     mapapp: () => { S.mapApp = v; save(); renderSet(); },
     theme: () => { S.theme = v; save(); applyTheme(); renderSet(); },
     export: async () => { const t = JSON.stringify(S); $('#io').value = t; try { await navigator.clipboard.writeText(t); $('#io-msg').textContent = 'คัดลอกแล้ว ✓'; } catch (er) { $('#io-msg').textContent = 'คัดลอกจากช่องด้านบนเอง'; $('#io').select(); } },
-    import: () => { try { const j = JSON.parse($('#io').value); if (!j || typeof j !== 'object' || !Array.isArray(j.exp) || typeof j.ov !== 'object') throw 0; S = { ...DEF, ...j, out: { ...DEF.out, ...(j.out || {}) }, ret: { ...DEF.ret, ...(j.ret || {}) } }; save(); applyTheme(); rebuild(); go('now'); } catch (er) { $('#io-msg').textContent = 'ข้อมูลไม่ถูกต้อง'; } },
-    reset: () => { if (!confirm('ล้างทุกอย่างที่แก้/บันทึกไว้ในเครื่องนี้?')) return; S = JSON.parse(JSON.stringify(DEF)); save(); applyTheme(); rebuild(); go('now'); },
+    syncnew: () => joinTrip(newTripCode()),
+    syncjoin: () => { const c = $('#sy-code').value.trim().toLowerCase(); if (!validTripCode(c)) return showErr('#sy-msg', 'รหัสไม่ถูกต้อง'); joinTrip(c); },
+    synccopy: async () => { try { await navigator.clipboard.writeText(inviteUrl()); $('#sy-msg').textContent = 'คัดลอกลิงก์แล้ว ✓'; } catch (er) { $('#sy-msg').textContent = inviteUrl(); } },
+    syncleave: () => { if (!confirm('ออกจากทริปนี้? เครื่องนี้จะหยุด sync แต่ข้อมูลของทุกคนยังอยู่')) return; Sync.leave(); location.reload(); },
+    import: () => { try { const j = JSON.parse($('#io').value); if (!j || typeof j !== 'object' || !Array.isArray(j.exp) || typeof j.ov !== 'object') throw 0; if (Sync.joined() && !confirm('นำเข้าจะทับแพลนของทุกคนในทริป ทำต่อไหม?')) return; S ={ ...DEF, ...j, out: { ...DEF.out, ...(j.out || {}) }, ret: { ...DEF.ret, ...(j.ret || {}) } }; save(); applyTheme(); rebuild(); go('now'); } catch (er) { $('#io-msg').textContent = 'ข้อมูลไม่ถูกต้อง'; } },
+    reset: () => { const shared = Sync.shared(); if (!confirm(shared ? 'ล้างค่าเฉพาะเครื่องนี้? แพลนของทุกคนยังอยู่' : 'ล้างทุกอย่างที่แก้/บันทึกไว้ในเครื่องนี้?')) return; S = { ...JSON.parse(JSON.stringify(DEF)), ...(shared || {}) }; save(); applyTheme(); rebuild(); go('now'); },
   };
   if (H[a]) H[a]();
 });
@@ -502,4 +548,5 @@ setInterval(() => { const f = document.activeElement; if ((page === 'now' || pag
 
 applyTheme(); rebuild();
 go((location.hash || '#now').slice(1));
+if (SYNC_ON) { Sync.start(); window.addEventListener('online', () => Sync.start()); }
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => { });

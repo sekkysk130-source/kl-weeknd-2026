@@ -145,6 +145,52 @@
     return err;
   }
 
-  const L = { hmToMin, minToHm, isHm, optCost, optMinutes, riskMinutes, effort, rank, reason, leaveAt, concertPlan, airportPlan, toMyr, toThb, summarize, settle, validExpense, validFlight, WEIGHTS };
+  /* ---------- sync: แตกข้อมูลกลางเป็นรายการย่อย สองคนแก้คนละรายการจะไม่ทับกัน ---------- */
+  const MAP_FIELDS = ['ov', 'pick', 'order', 'verify'];
+  const LIST_FIELDS = ['custom', 'exp'];
+  const CFG_FIELDS = ['prio', 'budget', 'names', 'out', 'ret', 'rate', 'rateMine', 'early', 'buffer', 'airportMin', 'meet', 'inclAuto'];
+  const clone = v => JSON.parse(JSON.stringify(v));
+
+  function flatten(s, def) {
+    const f = {};
+    for (const k of MAP_FIELDS) for (const [id, v] of Object.entries(s[k] || {})) f[`${k}.${id}`] = JSON.stringify(v);
+    for (const k of LIST_FIELDS) for (const x of s[k] || []) f[`${k}.${x.id}`] = JSON.stringify(x);
+    for (const [g, q] of Object.entries(s.quote || {})) for (const [o, v] of Object.entries(q || {})) f[`quote.${g}.${o}`] = JSON.stringify(v);
+    // ค่าที่ยังเท่าค่าตั้งต้นไม่ต้องเก็บ แก้ data.js ทีหลังจะได้ถึงทุกเครื่อง
+    for (const k of CFG_FIELDS) { const j = JSON.stringify(s[k]); if (j !== undefined && j !== JSON.stringify(def[k])) f[`cfg.${k}`] = j; }
+    return f;
+  }
+
+  function unflatten(f, def) {
+    const s = { quote: {} };
+    for (const k of MAP_FIELDS) s[k] = {};
+    for (const k of LIST_FIELDS) s[k] = [];
+    for (const k of CFG_FIELDS) s[k] = clone(def[k]);
+    for (const [key, j] of Object.entries(f)) {
+      const at = key.indexOf('.'), k = key.slice(0, at), id = key.slice(at + 1), v = JSON.parse(j);
+      if (MAP_FIELDS.includes(k)) s[k][id] = v;
+      else if (LIST_FIELDS.includes(k)) s[k].push(v);
+      else if (k === 'quote') { const d = id.indexOf('.'), g = id.slice(0, d); (s.quote[g] = s.quote[g] || {})[id.slice(d + 1)] = v; }
+      else if (k === 'cfg' && CFG_FIELDS.includes(id)) s[id] = v;
+    }
+    // id ขึ้นต้นด้วยเวลาที่สร้าง เรียงตาม id = เรียงตามเวลา
+    for (const k of LIST_FIELDS) s[k].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    return s;
+  }
+
+  function diffFlat(a, b) {
+    const set = {}, del = [];
+    for (const k of Object.keys(b)) if (a[k] !== b[k]) set[k] = b[k];
+    for (const k of Object.keys(a)) if (!(k in b)) del.push(k);
+    return { set, del };
+  }
+
+  function applyDiff(f, d) {
+    const out = { ...f, ...d.set };
+    for (const k of d.del) delete out[k];
+    return out;
+  }
+
+  const L = { hmToMin, minToHm, isHm, optCost, optMinutes, riskMinutes, effort, rank, reason, leaveAt, concertPlan, airportPlan, toMyr, toThb, summarize, settle, validExpense, validFlight, WEIGHTS, flatten, unflatten, diffFlat, applyDiff };
   if (typeof module !== 'undefined' && module.exports) module.exports = L; else root.L = L;
 })(this);

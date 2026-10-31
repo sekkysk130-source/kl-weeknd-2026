@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // เข้าถึงได้เฉพาะคนที่รู้รหัสทริป (เป็นส่วนหนึ่งของ path) · ไล่ดูรายชื่อทริปไม่ได้เพราะไม่มี rule ที่ /trips
+    match /trips/{code}/items/{item} {
+      allow read, delete: if request.auth != null && code.size() >= 20;
+      allow create, update: if request.auth != null && code.size() >= 20
+        && request.resource.data.keys().hasOnly(['v'])
+        && request.resource.data.v is string
+        && request.resource.data.v.size() < 20000;
+    }
+  }
+}
